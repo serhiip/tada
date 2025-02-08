@@ -1,0 +1,5 @@
+var myPrint = (a) => {
+  print(a)
+}
+
+myPrint("Hello World")

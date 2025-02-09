@@ -54,7 +54,6 @@ object Evaluator {
           case Some(value) => (value, context).pure[F]
           case None        => Exception("Undefined reference: " + name).raiseError
         }
-
     }
 
     private def evalBodyExps(body: List[Expression], context: Store): F[(Expression, Store)] = {

@@ -1,4 +1,6 @@
-var myPrint = (a) => {
+var b: int = 123
+
+var myPrint = (a: str) => {
   print(a)
 }
 

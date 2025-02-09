@@ -24,11 +24,14 @@ object Parser {
 
   def live[F[_]: Applicative]: Parser[F, P.Error] = new {
 
+    val whitespace: P[Unit]         = charIn(" \t\r\n").void
+    val whitespaces0: Parser0[Unit] = whitespace.rep0.void
+
     val parsing = P.recursive[Expression] { recurse =>
 
-      val whitespace: P[Unit]                  = charIn(" \t\r\n").void
-      val whitespaces0: Parser0[Unit]          = whitespace.rep0.void
       val listSep: P[Unit]                     = char(',').soft.surroundedBy(whitespaces0).void
+      val tpe                                  = string("str").as(Type.TString) | string("int").as(Type.TInt) | string("unit").as(Type.TUnit) | string("any").as(Type.TAny)
+      val ascription                           = (char(':') *> wsp.rep *> tpe).rep0(0, 1)
       def rep[A](pa: P[A]): Parser0[List[A]]   = pa.repSep0(listSep).surroundedBy(whitespaces0)
       def repNl[A](pa: P[A]): Parser0[List[A]] = pa.repSep0(crlf.void).surroundedBy(whitespaces0)
 
@@ -58,42 +61,36 @@ object Parser {
       } yield Expression.Apply(ref, args, (caretStart, caretEnd).toInfo)
 
       val definition: P[Expression.Def] = {
-        val argList = rep(ref).between(char('('), char(')'))
+        val argList = rep(ref ~ (wsp.rep0 *> ascription))
+          .between(char('('), char(')'))
+          .map(_.map(nameAndType => nameAndType._1 -> nameAndType._2.headOption.getOrElse(Type.TAny)))
         val body    = repNl(literal | recurse).between(char('{').surroundedBy(whitespaces0), char('}').surroundedBy(whitespaces0))
         for {
           caretStart  <- P.caret.with1
           result      <- (argList.with1 <* wsp.rep <* string("=>")) ~ (wsp.rep *> body)
           (args, body) = result
           caretEnd    <- P.caret
-        } yield Expression.Def(args.map(_ -> Type.TAny), body, (caretStart, caretEnd).toInfo)
+        } yield Expression.Def(args, body, (caretStart, caretEnd).toInfo)
       }
 
       val binding: P[Expression.Binding] = {
-        val lhs = string("var") *> wsp.rep *> ref
-        val rhs = (literal | recurse).surroundedBy(whitespaces0)
+        val lhs    = string("var") *> wsp.rep *> ref
+        val rhs    = (literal | recurse).surroundedBy(whitespaces0)
+        val assign = char('=')
+        val tpeAnn = ascription <* wsp.rep <* assign
         for {
-          caretStart   <- P.caret.with1
-          result       <- (lhs <* wsp.rep <* char('=') <* wsp.rep) ~ rhs
-          (name, value) = result
-          caretEnd     <- P.caret
-        } yield Expression.Binding(name, value, Type.TAny, (caretStart, caretEnd).toInfo)
+          caretStart          <- P.caret.with1
+          result              <- ((lhs <* wsp.rep0) ~ (tpeAnn | assign.as(List(Type.TAny))) <* wsp.rep) ~ rhs
+          ((name, tpe), value) = result
+          caretEnd            <- P.caret
+        } yield Expression.Binding(name, value, tpe.headOption.getOrElse(Type.TAny), (caretStart, caretEnd).toInfo)
       }
 
       P.oneOf(binding :: definition :: application :: ref :: Nil)
-
     }
 
     override def parse(source: String): F[Either[P.Error, List[Expression]]] = {
-      def recur(remainder: String, acc: Either[P.Error, List[Expression]]): Either[P.Error, List[Expression]] = {
-        acc flatMap { expressions =>
-          if remainder.isBlank() then Right(expressions.reverse)
-          else {
-            parsing.parse(remainder).flatMap((remainder, result) => recur(remainder, Right(result :: expressions)))
-          }
-        }
-
-      }
-      recur(source, Right(List.empty[Expression])).pure[F]
+      (parsing.rep0 <* whitespaces0 <* P.end).parseAll(source).pure[F]
     }
   }
 }

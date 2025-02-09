@@ -13,7 +13,7 @@ object Evaluator {
 
   import Expression.*
 
-  def sequential[F[_]: Console: MonadThrow]: Evaluator[F] = new {
+  def sequential[F[_]: Console: MonadThrow](errorPrinter: ErrorPrinter[F]): Evaluator[F] = new {
 
     type Store = Map[String, Expression]
 
@@ -21,24 +21,24 @@ object Evaluator {
 
       case l: (StringLiteral | IntLiteral | UnitValue) => (l, context).pure[F]
 
-      case Binding(name, value, _)   =>
+      case Binding(name, value, _, _)        =>
         execute(value, context) map { case (evaluatedValue, _) =>
           val updatedContext = context + (name.name -> evaluatedValue)
           (evaluatedValue, updatedContext)
         }
-      case d: Def                    => (d -> context).pure[F]
-      case Apply(Ref("print"), args) =>
+      case d: Def                            => (d -> context).pure[F]
+      case Apply(Ref("print", _), args, loc) =>
         args match {
           case expr :: _ =>
             execute(expr, context) flatMap {
               case (StringLiteral(value), context) => Console[F].println(value).as((UnitValue(), context))
-              case _                               => Console[F].errorln("print expects string argument").as((UnitValue(), context))
+              case _                               => errorPrinter.printError(loc, "print expects string argument").as((UnitValue(), context))
             }
           case Nil       => Console[F].errorln("print expects exactly one argument").as((UnitValue(), context))
         }
-      case Apply(funName, args)      =>
+      case Apply(funName, args, _)           =>
         context.get(funName.name) match {
-          case Some(Def(wantedArgs, body)) =>
+          case Some(Def(wantedArgs, body, _)) =>
             for {
               evaluatedArgs <- args.traverse(arg => execute(arg, context))
               tmpContext     = context ++ (wantedArgs zip evaluatedArgs).map { case ((argName, _), (argValue, _)) =>
@@ -49,7 +49,7 @@ object Evaluator {
 
           case Some(_) | None => Exception(s"Function not defined or incorrect type for $expr").raiseError
         }
-      case Ref(name)                 =>
+      case Ref(name, _)                      =>
         context.get(name) match {
           case Some(value) => (value, context).pure[F]
           case None        => Exception("Undefined reference: " + name).raiseError

@@ -25,7 +25,7 @@ object Main extends IOApp {
       source           <- IO.fromEither(parsed.left.map(e => Exception(s"Parsing Error: $e")))
       _                <- source.traverse_(expression => IO.println(expression.show))
       given Console[IO] = Console.make[IO]
-      _                <- Evaluator.sequential.exec(source)
+      _                <- Evaluator.sequential(ErrorPrinter.runtimeErrors[IO](path.toAbsolutePath, contents)).exec(source)
     } yield ()
     result >> IO(ExitCode.Success)
 }

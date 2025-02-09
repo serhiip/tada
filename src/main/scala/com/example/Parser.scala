@@ -2,6 +2,7 @@ package com.example
 
 import cats.syntax.applicative.*
 import cats.Applicative
+import cats.parse.Caret
 
 trait Parser[F[_], E] {
   def parse(source: String): F[Either[E, List[Expression]]]
@@ -13,6 +14,13 @@ object Parser {
   import cats.parse.Parser.*
   import cats.parse.Rfc5234.{alpha, digit, wsp, char as asciiChar, dquote, crlf}
   import cats.parse.Parser0
+
+  extension (boundaries: (Caret, Caret)) {
+    def toInfo: Info = Info(
+      startsAt = Loc(offset = boundaries._1.offset, line = boundaries._1.line, column = boundaries._1.col),
+      endsBefore = Loc(offset = boundaries._2.offset, line = boundaries._2.line, column = boundaries._2.col)
+    )
+  }
 
   def live[F[_]: Applicative]: Parser[F, P.Error] = new {
 
@@ -35,25 +43,40 @@ object Parser {
       )
 
       val literal: P[Expression] = stringLiteral | intLiteral
-      val ref: P[Expression.Ref] = (alpha | digit).rep.map(name => Expression.Ref(String(name.iterator.toArray)))
+      val ref: P[Expression.Ref] =
+        for {
+          caretStart <- P.caret.with1
+          name       <- (alpha | digit).rep
+          caretEnd   <- P.caret
+        } yield Expression.Ref(String(name.iterator.toArray), (caretStart, caretEnd).toInfo)
 
-      val application = {
-        val parse = ref.soft ~ rep(literal | recurse).with1.between(char('('), char(')'))
-        parse.map { case (ref, args) => Expression.Apply(ref, args) }
-      }
+      val application = for {
+        caretStart <- P.caret.with1
+        result     <- ref.soft ~ rep(literal | recurse).with1.between(char('('), char(')'))
+        (ref, args) = result
+        caretEnd   <- P.caret
+      } yield Expression.Apply(ref, args, (caretStart, caretEnd).toInfo)
 
       val definition: P[Expression.Def] = {
         val argList = rep(ref).between(char('('), char(')'))
         val body    = repNl(literal | recurse).between(char('{').surroundedBy(whitespaces0), char('}').surroundedBy(whitespaces0))
-        val parsed  = (argList.with1 <* wsp.rep <* string("=>")) ~ (wsp.rep *> body)
-        parsed.map((args, body) => Expression.Def(args.map(_ -> Type.TAny), body))
+        for {
+          caretStart  <- P.caret.with1
+          result      <- (argList.with1 <* wsp.rep <* string("=>")) ~ (wsp.rep *> body)
+          (args, body) = result
+          caretEnd    <- P.caret
+        } yield Expression.Def(args.map(_ -> Type.TAny), body, (caretStart, caretEnd).toInfo)
       }
 
       val binding: P[Expression.Binding] = {
-        val lhs    = string("var") *> wsp.rep *> ref
-        val rhs    = (literal | recurse).surroundedBy(whitespaces0)
-        val parsed = (lhs <* wsp.rep <* char('=') <* wsp.rep) ~ rhs
-        parsed.map((name, value) => Expression.Binding(name, value, Type.TAny))
+        val lhs = string("var") *> wsp.rep *> ref
+        val rhs = (literal | recurse).surroundedBy(whitespaces0)
+        for {
+          caretStart   <- P.caret.with1
+          result       <- (lhs <* wsp.rep <* char('=') <* wsp.rep) ~ rhs
+          (name, value) = result
+          caretEnd     <- P.caret
+        } yield Expression.Binding(name, value, Type.TAny, (caretStart, caretEnd).toInfo)
       }
 
       P.oneOf(binding :: definition :: application :: ref :: Nil)

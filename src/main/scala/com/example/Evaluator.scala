@@ -17,7 +17,7 @@ object Evaluator {
 
     type Store = Map[String, Expression]
 
-    def execute(expr: Expression, context: Store): F[(Expression, Store)] = expr match {
+    private def execute(expr: Expression, context: Store): F[(Expression, Store)] = expr match {
 
       case l: (StringLiteral | IntLiteral | UnitValue) => (l, context).pure[F]
 
@@ -38,10 +38,10 @@ object Evaluator {
         }
       case Apply(funName, args, _)           =>
         context.get(funName.name) match {
-          case Some(Def(wantedArgs, body, _)) =>
+          case Some(Def(wantedArgs, body, _, _)) =>
             for {
               evaluatedArgs <- args.traverse(arg => execute(arg, context))
-              tmpContext     = context ++ (wantedArgs zip evaluatedArgs).map { case ((argName, _), (argValue, _)) =>
+              tmpContext     = context ++ (wantedArgs zip evaluatedArgs).map { case (argName, (argValue, _)) =>
                                  argName.name -> argValue
                                }
               result        <- evalBodyExps(body, tmpContext)

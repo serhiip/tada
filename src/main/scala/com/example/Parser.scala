@@ -69,8 +69,10 @@ object Parser {
           caretStart  <- P.caret.with1
           result      <- (argList.with1 <* wsp.rep <* string("=>")) ~ (wsp.rep *> body)
           (args, body) = result
+          argNames     = args.map(_._1)
+          argTypes     = args.map(_._2)
           caretEnd    <- P.caret
-        } yield Expression.Def(args, body, (caretStart, caretEnd).toInfo)
+        } yield Expression.Def(argNames, body, Type.TFun(Type.TAny, argTypes*), (caretStart, caretEnd).toInfo)
       }
 
       val binding: P[Expression.Binding] = {
